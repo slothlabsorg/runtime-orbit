@@ -1,14 +1,19 @@
-//! `runtime-runtime-orbit.service` — run the borrow as a background login service so it
-//! delegation + port forwarding come back automatically after a reboot/login.
+//! `runtime-orbit service` — run the borrow as a background login service, so the
+//! routing and port forwarding come back on their own after a reboot or logout.
 //!
 //! macOS → a launchd LaunchAgent. Linux → a systemd --user unit. Windows →
 //! printed Task Scheduler guidance (the easiest option there).
 
 use anyhow::{Context, Result};
 
-use crate::config;
 use crate::util;
 
+// launchd wants a label and an explicit log file; systemd has the unit name and
+// the journal instead, so both are macOS-only.
+#[cfg(target_os = "macos")]
+use crate::config;
+
+#[cfg(target_os = "macos")]
 const LABEL: &str = "org.slothlabs.runtime-orbit";
 
 fn binary_path() -> Result<String> {

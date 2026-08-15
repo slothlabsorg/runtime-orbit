@@ -16,10 +16,35 @@ permissions:
   contents: write
 
 jobs:
+  # The upload action attaches assets to an *existing* release, so create it
+  # first. Five matrix jobs racing to create it themselves is how you get
+  # "release not found" on all of them.
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - name: Create the release if it doesn't exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG already exists"
+            exit 0
+          fi
+          gh release create "$TAG" \
+            --title "runtime-orbit ${TAG#v}" \
+            --generate-notes \
+            --verify-tag
+
   # Cross-compile the `runtime-orbit` binary for every supported platform and
   # attach a per-target archive (+ sha256) to the GitHub Release for this tag.
   binaries:
     name: ${{ matrix.target }}
+    needs: create-release
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -45,7 +70,6 @@ jobs:
           target: ${{ matrix.target }}
           archive: runtime-orbit-$target
           checksum: sha256
-          ref: refs/tags/${{ inputs.tag || github.ref_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
   # Ship the installers as release assets too, so the website can link to a
