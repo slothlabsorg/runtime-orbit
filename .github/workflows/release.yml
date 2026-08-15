@@ -54,7 +54,11 @@ jobs:
           - { target: x86_64-apple-darwin,         os: macos-latest }
           - { target: x86_64-unknown-linux-gnu,    os: ubuntu-latest }
           - { target: aarch64-unknown-linux-gnu,   os: ubuntu-latest }
-          - { target: x86_64-pc-windows-msvc,      os: windows-latest }
+          # No native Windows target. The transport is a forwarded *unix* socket,
+          # and bollard's unix connector is unix-only — a Windows binary would
+          # not compile, let alone work. Windows machines lend their runtime from
+          # inside a WSL2 distro, using the linux binary. A native Windows
+          # borrower needs the TCP-forward path; see the roadmap.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -81,11 +85,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag || github.ref }}
-      - name: Attach install scripts
+      - name: Attach install script
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ inputs.tag || github.ref_name }}
-        run: gh release upload "$TAG" dist/install.sh dist/install.ps1 --clobber
+        run: gh release upload "$TAG" dist/install.sh --clobber
 
   # Bump the Homebrew formula in slothlabsorg/homebrew-tap after the binaries
   # are published. Requires a HOMEBREW_TAP_TOKEN secret (fine-grained PAT with
@@ -172,7 +176,5 @@ jobs:
 #       --install-location /usr/local/bin --root <dir-with-binary> runtime-orbit.pkg`,
 #       then `productsign`/`notarytool` with a Developer ID cert
 #       (secrets: MACOS_CERT_P12, MACOS_CERT_PASSWORD, AC_API_KEY…).
-#   • Windows .exe/.msi → `signtool sign /fd SHA256` with an Authenticode cert
-#       (secrets: WINDOWS_PFX_BASE64, WINDOWS_PFX_PASSWORD).
-# Until those secrets exist, brew + install.sh + install.ps1 are the frictionless
-# install paths and need no signing.
+# Until that cert exists, brew + install.sh are the frictionless install paths
+# and need no signing.

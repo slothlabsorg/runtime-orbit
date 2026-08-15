@@ -42,15 +42,12 @@ curl -fsSL https://slothlabs.org/install/runtime-orbit | sh
 brew install slothlabsorg/tap/runtime-orbit
 ```
 
-**Windows (PowerShell)**
-
-```powershell
-irm https://slothlabs.org/install/runtime-orbit.ps1 | iex
-```
-
 Installs `runtime-orbit`, plus `r-orbit` and `orbit` as shortcuts. Prebuilt
-binaries for macOS (Intel + Apple Silicon), Linux (x86_64 + arm64) and Windows
-are on the [releases page](https://github.com/slothlabsorg/runtime-orbit/releases).
+binaries for macOS (Intel + Apple Silicon) and Linux (x86_64 + arm64) are on the
+[releases page](https://github.com/slothlabsorg/runtime-orbit/releases).
+
+**Windows** runs it inside a WSL2 distro, with the Linux binary — see
+[Requirements](#requirements).
 
 ## Two minutes, start to finish
 
@@ -191,8 +188,11 @@ why.
   Desktop, colima, Lima, Podman or containerd — anything speaking the Docker
   Engine API over a unix socket.
 - **The `docker` CLI on the borrower.** No engine needed here; that's the point.
-- macOS and Linux are fully supported on both sides. A Windows donor works via
-  WSL2 — run `donor setup` inside the distro.
+- **macOS and Linux on both sides.** A Windows machine can be a donor from inside
+  a WSL2 distro: install the Linux binary there and run `donor setup` in the
+  distro, and it looks like any other unix donor. There is no native Windows
+  binary — the transport is a forwarded unix socket — so a Windows *borrower* is
+  on the roadmap, not shipping.
 
 ## Docs
 

@@ -4,6 +4,9 @@
 #   curl -fsSL https://slothlabs.org/install/runtime-orbit | sh
 #   curl -fsSL https://raw.githubusercontent.com/slothlabsorg/runtime-orbit/main/dist/install.sh | sh
 #
+# On Windows, run this inside a WSL2 distro: there is no native Windows build,
+# because the transport is a forwarded unix socket.
+#
 # Downloads the latest release binary for your OS/arch and installs
 # `runtime-orbit`, plus the `r-orbit` and `orbit` shortcuts.
 #
@@ -27,7 +30,7 @@ arch=$(uname -m)
 case "$os" in
   Darwin) plat="apple-darwin" ;;
   Linux)  plat="unknown-linux-gnu" ;;
-  *) die "unsupported OS: $os (use install.ps1 on Windows)" ;;
+  *) die "unsupported OS: $os — on Windows, run this inside a WSL2 distro" ;;
 esac
 case "$arch" in
   arm64|aarch64) cpu="aarch64" ;;

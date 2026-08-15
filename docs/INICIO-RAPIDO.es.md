@@ -31,12 +31,12 @@ curl -fsSL https://slothlabs.org/install/runtime-orbit | sh
 brew install slothlabsorg/tap/runtime-orbit
 ```
 
-```powershell
-# Windows
-irm https://slothlabs.org/install/runtime-orbit.ps1 | iex
-```
-
 Instala `runtime-orbit` y los atajos `r-orbit` y `orbit`.
+
+**En Windows** se instala el binario de Linux dentro de una distro WSL2. No hay
+binario nativo de Windows: el transporte es un socket unix reenviado, así que
+Windows no puede ser el *borrower*. Como *donor* dentro de WSL2 funciona igual
+que cualquier otra máquina unix.
 
 ## Dos minutos, de principio a fin
 
@@ -144,6 +144,7 @@ coincide con ninguna cae en los presupuestos de `limits`.
   NFS, Syncthing) y monta la ruta del donor. Los contextos de build sí se suben, y
   funcionan sin más.
 - **Ambas máquinas en la misma LAN**, y SSH activo en el donor.
+- **macOS y Linux en los dos lados.** Windows presta su runtime desde WSL2.
 - **En la laptop solo necesitas el CLI de `docker`**, no un motor — de eso se trata.
 - Funciona con Docker Desktop, OrbStack, Rancher Desktop, colima, Lima, Podman y
   containerd. `runtime-orbit engines` dice cuál escogió en cada lado.

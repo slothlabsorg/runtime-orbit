@@ -106,12 +106,6 @@ curl -fsSL https://slothlabs.org/install/runtime-orbit | sh
 brew install slothlabsorg/tap/runtime-orbit
 ```
 
-**Windows (PowerShell)**
-
-```powershell
-irm https://slothlabs.org/install/runtime-orbit.ps1 | iex
-```
-
 **From source** (needs Rust 1.75+)
 
 ```sh
@@ -122,6 +116,10 @@ cd runtime-orbit && cargo install --path .
 All routes install `runtime-orbit` plus two shortcuts — `r-orbit` and `orbit` —
 so `r-orbit dashboard` works, and anyone upgrading from container-orbit keeps
 their muscle memory.
+
+**On Windows**, install the Linux binary inside a WSL2 distro. There is no native
+Windows build: the transport is a forwarded unix socket, which Windows can't take
+part in as a borrower. A WSL2 distro is a perfectly good donor.
 
 Verify:
 
@@ -487,8 +485,6 @@ runtime-orbit service status
 runtime-orbit service uninstall
 ```
 
-On Windows the command prints the `schtasks` one-liner.
-
 The service keeps `up` running and reconnects if the donor reboots or the network
 drops. Worth pairing with `donor setup`'s sleep fix on the other side.
 
@@ -629,9 +625,10 @@ tree inside a container, share the directory to the donor (SMB, NFS, Syncthing)
 and mount the donor-side path.
 
 **A Windows donor doesn't forward ports.** Automatic forwarding needs the
-runtime's socket reachable over SSH; on Windows it lives inside WSL2. Run
-`runtime-orbit donor setup` *inside* the WSL distro and it looks like a normal
-unix donor. `runtime-orbit doctor` flags this.
+runtime's socket reachable over SSH; on Windows it lives inside WSL2, not on the
+Windows side. Install the Linux binary in the distro and run `runtime-orbit donor
+setup` *there* — it then looks like a normal unix donor. `runtime-orbit doctor`
+flags the case explicitly when it sees a Windows donor.
 
 **`docker` still points at the donor after `down`.** `down` restores the context
 that was active before `up`. If that context is gone, it falls back to `default`;
