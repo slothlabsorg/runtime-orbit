@@ -9,27 +9,27 @@
 class RuntimeOrbit < Formula
   desc "Borrow a beefier machine's container runtime over your LAN, transparently"
   homepage "https://slothlabs.org/runtime-orbit"
-  version "0.2.0"
+  version "0.2.1"
   license "MIT"
 
   on_macos do
     on_arm do
-      url "https://github.com/slothlabsorg/runtime-orbit/releases/download/v0.2.0/runtime-orbit-aarch64-apple-darwin.tar.gz"
+      url "https://github.com/slothlabsorg/runtime-orbit/releases/download/v0.2.1/runtime-orbit-aarch64-apple-darwin.tar.gz"
       sha256 "REPLACED_BY_CI"
     end
     on_intel do
-      url "https://github.com/slothlabsorg/runtime-orbit/releases/download/v0.2.0/runtime-orbit-x86_64-apple-darwin.tar.gz"
+      url "https://github.com/slothlabsorg/runtime-orbit/releases/download/v0.2.1/runtime-orbit-x86_64-apple-darwin.tar.gz"
       sha256 "REPLACED_BY_CI"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/slothlabsorg/runtime-orbit/releases/download/v0.2.0/runtime-orbit-aarch64-unknown-linux-gnu.tar.gz"
+      url "https://github.com/slothlabsorg/runtime-orbit/releases/download/v0.2.1/runtime-orbit-aarch64-unknown-linux-gnu.tar.gz"
       sha256 "REPLACED_BY_CI"
     end
     on_intel do
-      url "https://github.com/slothlabsorg/runtime-orbit/releases/download/v0.2.0/runtime-orbit-x86_64-unknown-linux-gnu.tar.gz"
+      url "https://github.com/slothlabsorg/runtime-orbit/releases/download/v0.2.1/runtime-orbit-x86_64-unknown-linux-gnu.tar.gz"
       sha256 "REPLACED_BY_CI"
     end
   end

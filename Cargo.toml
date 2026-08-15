@@ -1,6 +1,6 @@
 [package]
 name = "runtime-orbit"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "Borrow another machine's container runtime over your LAN — transparently, over SSH, with automatic port forwarding back to localhost."
 license = "MIT"

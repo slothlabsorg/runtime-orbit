@@ -94,10 +94,12 @@ async fn handshake(stream: TcpStream, code: &str, hostname: &str, pubkey: &str) 
         .await
         .context("pairing client timed out")??;
 
-    let expected_prefix = format!("{PROTO} ");
     let inner = reader.get_mut();
 
-    let Some(offered) = line.trim().strip_prefix(&expected_prefix) else {
+    // Strip the prefix *before* trimming the remainder: trimming the whole line
+    // first eats the separating space, so a well-formed request with an empty
+    // code would be reported as a protocol error rather than a wrong code.
+    let Some(offered) = line.trim().strip_prefix(PROTO) else {
         inner.write_all(b"ERR unrecognised protocol\n").await?;
         return Ok(false);
     };
@@ -193,6 +195,34 @@ mod tests {
         assert_eq!(host, "laptop");
         assert_eq!(key, pubkey);
         assert!(server.await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn empty_code_is_a_wrong_code_not_a_protocol_error() {
+        let pubkey = "ssh-ed25519 AAAATESTKEY runtime-orbit";
+        let port = 47697;
+        tokio::spawn(async move {
+            let _ = serve_once(
+                port,
+                "111111",
+                "laptop",
+                pubkey,
+                Duration::from_secs(3),
+                |_, _| {},
+            )
+            .await;
+        });
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        stream
+            .write_all(format!("{PROTO} \n").as_bytes())
+            .await
+            .unwrap();
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        assert!(line.contains("wrong code"), "got: {line}");
     }
 
     #[tokio::test]
