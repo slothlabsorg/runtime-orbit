@@ -1,4 +1,4 @@
-//! `orbit up` — switch docker to the host, open the SSH master + socket forward,
+//! `runtime-orbit up` — route docker to the donor, open the SSH master + socket forward,
 //! and start the port reconciler. Detaches by default so you can keep working.
 
 use anyhow::{Context, Result};
@@ -13,22 +13,22 @@ use crate::util;
 
 pub async fn run(foreground: bool) -> Result<()> {
     let mut cfg = config::require_linked()?;
-    util::header("orbit up");
+    util::header("runtime-orbit up");
 
     // Already running?
     if ssh::master_alive(&cfg).await && config::pid_file()?.exists() {
-        util::warn("orbit is already up. Use `orbit status` or `orbit down`.");
+        util::warn("already up. Use `runtime-orbit status`, `runtime-orbit dashboard` or `runtime-orbit down`.");
         return Ok(());
     }
 
-    // Remember the current context so `orbit down` can restore it.
+    // Remember the current context so `runtime-orbit down` can restore it.
     let current = docker_ctx::current_context().await.unwrap_or_default();
     if current != cfg.context_name {
         cfg.previous_context = Some(current);
     }
     cfg.save()?;
 
-    // Switch docker to the host.
+    // Route docker to the donor.
     util::step(&format!(
         "Switching docker to context `{}`…",
         cfg.context_name
@@ -58,7 +58,7 @@ pub async fn run(foreground: bool) -> Result<()> {
 
     // Detached: spawn the hidden `forward` worker in its own process group.
     let exe = std::env::current_exe().context("locating orbit binary")?;
-    let log = config::run_dir()?.join("orbit.log");
+    let log = config::log_path()?;
     let logfile = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -70,8 +70,8 @@ pub async fn run(foreground: bool) -> Result<()> {
     util::ok("forwarder started in the background");
     util::info("logs", &log.to_string_lossy());
     println!();
-    util::ok("Docker now runs on the host. `docker run -p 8080:80 …` → curl localhost:8080");
-    println!("  Stop anytime with `orbit down`.");
+    util::ok("Docker now runs on the donor. `docker run -p 8080:80 …` → curl localhost:8080");
+    println!("  Stop anytime with `runtime-orbit down`.");
     util::funding_note();
     Ok(())
 }

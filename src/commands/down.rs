@@ -1,4 +1,4 @@
-//! `orbit down` — stop the forwarder, close the SSH master, restore the context.
+//! `runtime-orbit down` — stop the forwarder, close the SSH master, restore the context.
 
 use anyhow::Result;
 
@@ -9,7 +9,7 @@ use crate::util;
 
 pub async fn run() -> Result<()> {
     let mut cfg = config::require_linked()?;
-    util::header("orbit down");
+    util::header("runtime-orbit down");
 
     // 1. Stop the detached forwarder.
     if let Ok(pid_path) = config::pid_file() {
@@ -39,9 +39,12 @@ pub async fn run() -> Result<()> {
 }
 
 async fn restore_context(cfg: &mut Config) {
+    // Never restore into a context we manage: its socket is the tunnel we just
+    // tore down. Upgraders can have `orbit` saved here from a previous version.
     let target = cfg
         .previous_context
         .clone()
+        .filter(|c| c != &cfg.context_name && !config::LEGACY_CONTEXTS.contains(&c.as_str()))
         .unwrap_or_else(|| "default".into());
     match docker_ctx::use_context(&target).await {
         Ok(()) => util::info("context", &target),

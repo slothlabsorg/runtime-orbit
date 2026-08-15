@@ -1,4 +1,4 @@
-//! `orbit logs` — show (and optionally follow) the detached forwarder's log.
+//! `runtime-orbit logs` — show (and optionally follow) the forwarder's log.
 
 use anyhow::Result;
 use std::io::{Read, Seek, SeekFrom};
@@ -7,9 +7,9 @@ use crate::config;
 use crate::util;
 
 pub async fn run(follow: bool, lines: usize) -> Result<()> {
-    let path = config::run_dir()?.join("orbit.log");
+    let path = config::log_path()?;
     if !path.exists() {
-        util::warn("no log yet — start orbit with `orbit up` first.");
+        util::warn("no log yet — start orbit with `runtime-orbit up` first.");
         return Ok(());
     }
 

@@ -1,0 +1,45 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: build · test · lint
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --all
+
+      # The pairing tests bind real ports and the shell probes call real
+      # binaries, so a plain `cargo test` already covers the risky parts. This
+      # last step just proves the CLI surface parses on each platform.
+      - run: cargo run --quiet -- --help
+      - run: cargo run --quiet -- donor --help
+      - run: cargo run --quiet -- route --help
+
+  shell:
+    name: installer scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck install.sh
+        run: shellcheck -s sh dist/install.sh
+      - name: dash syntax check
+        run: dash -n dist/install.sh

@@ -1,5 +1,5 @@
 //! The detached `forward` worker (hidden). Runs only the reconciler loop; the
-//! parent `orbit up` has already switched context and opened the SSH master.
+//! parent `runtime-orbit up` has already switched context and opened the SSH master.
 
 use anyhow::Result;
 

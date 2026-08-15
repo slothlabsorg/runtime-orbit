@@ -1,14 +1,16 @@
 [package]
-name = "container-orbit"
-version = "0.1.0"
+name = "runtime-orbit"
+version = "0.2.0"
 edition = "2021"
-description = "Delegate Docker to a beefier machine on your LAN — transparently, over SSH, with automatic port forwarding back to localhost."
+description = "Borrow another machine's container runtime over your LAN — transparently, over SSH, with automatic port forwarding back to localhost."
 license = "MIT"
-repository = "https://github.com/slothlabsorg/container-orbit"
+repository = "https://github.com/slothlabsorg/runtime-orbit"
 readme = "README.md"
 
+# One binary. The installers additionally symlink `r-orbit` (short) and `orbit`
+# (the pre-0.2 name) so muscle memory keeps working.
 [[bin]]
-name = "orbit"
+name = "runtime-orbit"
 path = "src/main.rs"
 
 [dependencies]

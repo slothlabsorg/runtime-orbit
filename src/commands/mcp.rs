@@ -1,4 +1,4 @@
-//! `orbit mcp` — start the stdio MCP server (see `crate::mcp`).
+//! `runtime-orbit mcp` — start the stdio MCP server (see `crate::mcp`).
 
 use anyhow::Result;
 

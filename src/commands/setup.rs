@@ -1,59 +1,75 @@
-//! `orbit setup` — the zero-friction, guided path. Discovers a host, sets up the
-//! SSH key (authorizing it if needed), links, brings orbit up, and proves it works
-//! with an end-to-end self-test. Aims to get you delegating Docker in ~2 minutes.
+//! `runtime-orbit setup` — run this on the machine that is short on RAM.
+//!
+//! Discovers (or takes) the donor's address, sets up the SSH key and authorizes
+//! it, links, brings the borrow up, and proves it works with an end-to-end
+//! self-test. Target: borrowing a runtime in about two minutes.
 
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 use std::process::Stdio;
 
 use crate::commands::{link, up};
-use crate::config::{Config, DEFAULT_CONTEXT};
-use crate::host::HostKind;
+use crate::config::Config;
+use crate::metrics;
 use crate::net_scan;
 use crate::ssh;
 use crate::util;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
-    host_arg: Option<String>,
+    address: Option<String>,
     user_arg: Option<String>,
     port: u16,
+    max_ram: Option<f64>,
+    local_ram_threshold: Option<f64>,
     yes: bool,
     no_test: bool,
 ) -> Result<()> {
-    util::header("orbit setup");
-    println!("  Let's point your Docker at a beefier machine. This takes ~2 minutes.\n");
+    util::header("runtime-orbit setup");
+    println!(
+        "  This machine will borrow another machine's container runtime.\n  \
+         Takes about two minutes.\n"
+    );
 
-    // 1. Host address --------------------------------------------------------
-    let host = match host_arg {
+    // Show what we're working with — it frames why you're doing this.
+    let local = metrics::local_vitals().await;
+    if local.mem_total > 0 {
+        println!(
+            "  {} {} · {} · {} cores · {} RAM ({} free)\n",
+            "this machine:".dimmed(),
+            local.hostname,
+            local.os,
+            local.cores,
+            metrics::fmt_gib_u(local.mem_total),
+            metrics::fmt_gib_u(local.mem_avail),
+        );
+    }
+
+    // 1. Donor address ------------------------------------------------------
+    let donor_addr = match address {
         Some(h) => h,
-        None => pick_host(yes)?,
+        None => pick_donor(yes)?,
     };
 
     // 2. SSH user ------------------------------------------------------------
-    let default_user = util::run("whoami", &[]).await.unwrap_or_else(|_| "root".into());
+    let default_user = util::run("whoami", &[])
+        .await
+        .unwrap_or_else(|_| "root".into());
     let user = match user_arg {
         Some(u) => u,
         None if yes => default_user.clone(),
-        None => inquire::Text::new("SSH username on the host:")
+        None => inquire::Text::new("SSH username on the donor:")
             .with_default(&default_user)
-            .with_help_message("The macOS/Linux login on the beefy machine")
+            .with_help_message("Your login on the beefy machine")
             .prompt()
             .context("cancelled")?,
     };
 
-    let target = format!("{user}@{host}");
-    let cfg = Config {
-        host_user: user.clone(),
-        host_addr: host.clone(),
-        ssh_port: port,
-        adapter: HostKind::Unix,
-        remote_socket: "/var/run/docker.sock".into(),
-        context_name: DEFAULT_CONTEXT.to_string(),
-        previous_context: None,
-    };
+    let target = format!("{user}@{donor_addr}");
+    let cfg = Config::for_donor(&user, &donor_addr, port);
 
     // 3. SSH key + authorization --------------------------------------------
-    util::step("Preparing the orbit SSH key…");
+    util::step("Preparing the runtime-orbit SSH key…");
     let pubkey = ssh::ensure_key().await?;
     util::ok("key ready");
 
@@ -61,46 +77,74 @@ pub async fn run(
     if ssh::test_connection(&cfg).await.is_err() {
         authorize_key(&cfg, &pubkey, yes).await?;
     } else {
-        util::ok("the orbit key is already authorized");
+        util::ok("the runtime-orbit key is already authorized");
     }
 
     // 4. Link (detect socket + create context) ------------------------------
     println!();
     link::run(&target, port, None).await?;
 
-    // 5. Up ------------------------------------------------------------------
+    // 5. Budgets, if the user asked for them --------------------------------
+    if max_ram.is_some() || local_ram_threshold.is_some() {
+        let mut cfg = Config::load()?;
+        if let Some(gb) = max_ram {
+            cfg.limits.max_borrow_ram_gb = Some(gb);
+        }
+        if let Some(gb) = local_ram_threshold {
+            cfg.limits.local_ram_threshold_gb = Some(gb);
+        }
+        cfg.save()?;
+        util::ok("saved your RAM budgets — see `runtime-orbit limits show`");
+    }
+
+    // 6. Up ------------------------------------------------------------------
     println!();
     up::run(false).await?;
 
-    // 6. Self-test -----------------------------------------------------------
+    // 7. Self-test -----------------------------------------------------------
     if !no_test {
         println!();
         if let Err(e) = self_test().await {
             util::warn(&format!(
-                "self-test could not complete ({e:#}). orbit is up regardless — try:\n\
+                "self-test could not complete ({e:#}). The borrow is up regardless — try:\n\
                  docker run -d -p 8080:80 nginx && curl localhost:8080"
             ));
         }
     }
 
     util::header("You're set");
+    println!("  Docker now runs on {}. Use it normally:\n", target.bold());
     println!(
-        "  Docker now runs on {}. Use it normally:\n",
-        target.bold()
+        "      {}  docker build / run / compose — all on the donor",
+        "›".dimmed()
     );
-    println!("      {}  docker build / run / compose — all on the host", "›".dimmed());
-    println!("      {}  published ports (-p) appear on your localhost", "›".dimmed());
-    println!("      {}  {}  keep it running across logins", "›".dimmed(), "orbit service install".cyan());
-    println!("      {}  {}  connect an AI assistant", "›".dimmed(), "orbit mcp".cyan());
-    println!("      {}  {}  stop and restore local docker", "›".dimmed(), "orbit down".cyan());
+    println!(
+        "      {}  published ports (-p) appear on this machine's localhost",
+        "›".dimmed()
+    );
+    println!(
+        "      {}  {}   live view of both machines",
+        "›".dimmed(),
+        "runtime-orbit dashboard".cyan()
+    );
+    println!(
+        "      {}  {}   keep it running across logins",
+        "›".dimmed(),
+        "runtime-orbit service install".cyan()
+    );
+    println!(
+        "      {}  {}   stop and go back to local docker",
+        "›".dimmed(),
+        "runtime-orbit down".cyan()
+    );
     util::funding_note();
     Ok(())
 }
 
-/// Discover hosts on the LAN and let the user pick, or type one in.
-fn pick_host(yes: bool) -> Result<String> {
+/// Discover donors on the LAN and let the user pick, or type one in.
+fn pick_donor(yes: bool) -> Result<String> {
     if yes {
-        anyhow::bail!("--yes needs --host <addr> (nothing to pick non-interactively)");
+        anyhow::bail!("--yes needs an address: `runtime-orbit setup --ip <donor-ip> --yes`");
     }
     util::step("Scanning your LAN for machines with SSH open…");
     let candidates = futures_lite_block(net_scan::scan(22));
@@ -111,110 +155,149 @@ fn pick_host(yes: bool) -> Result<String> {
     let mut options: Vec<String> = candidates.iter().map(|c| c.ip.to_string()).collect();
     if options.is_empty() {
         util::warn("no SSH hosts found automatically — enter the address manually.");
-        return prompt_manual_host();
+        return prompt_manual_donor();
     }
     options.push(manual.clone());
     options.push(rescan.clone());
 
-    let choice = inquire::Select::new("Which machine should run Docker?", options)
+    let choice = inquire::Select::new("Which machine should lend its runtime?", options)
         .with_help_message("Pick the beefy machine on your network")
         .prompt()
         .context("cancelled")?;
 
     if choice == manual {
-        prompt_manual_host()
+        prompt_manual_donor()
     } else if choice == rescan {
-        pick_host(false)
+        pick_donor(false)
     } else {
         Ok(choice)
     }
 }
 
-fn prompt_manual_host() -> Result<String> {
-    inquire::Text::new("Host address (IP or hostname):")
-        .with_help_message("e.g. 192.168.1.42 or gamer.local")
+fn prompt_manual_donor() -> Result<String> {
+    inquire::Text::new("Donor address (IP or hostname):")
+        .with_help_message("e.g. 192.168.1.20 or beefy.local")
         .prompt()
         .context("cancelled")
         .map(|s| s.trim().to_string())
 }
 
-/// Authorize the orbit public key on the host. Tries `ssh-copy-id` interactively
-/// (works in a real terminal), then falls back to a copy-pasteable manual command.
+/// Authorize our public key on the donor, entirely from inside this command.
+///
+/// Two in-app routes, both self-contained — we never ask anyone to hand-edit
+/// `authorized_keys` or run `ssh-copy-id`:
+///
+/// 1. **Password once** — we open an SSH session with the terminal inherited, so
+///    OpenSSH's password prompt appears right here, and we do the
+///    `authorized_keys` edit ourselves on the other side.
+/// 2. **Pair from the donor** — for machines with password login disabled. This
+///    command opens a one-shot listener with a 6-digit code; the donor runs
+///    `runtime-orbit donor pair <ip>` and pulls the key over the LAN.
 async fn authorize_key(cfg: &Config, pubkey: &str, yes: bool) -> Result<()> {
-    util::warn("the orbit key isn't authorized on the host yet — let's fix that.");
-
-    if !yes {
-        // Attempt ssh-copy-id with inherited stdio so the password prompt works.
-        util::step("Installing the key (you may be asked for the host password)…");
-        let pub_path = crate::config::ssh_key_path()?.with_extension("pub");
-        let status = tokio::process::Command::new("ssh-copy-id")
-            .args([
-                "-i",
-                &pub_path.to_string_lossy(),
-                "-p",
-                &cfg.ssh_port.to_string(),
-                &cfg.ssh_target(),
-            ])
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()
-            .await
-            .ok();
-
-        if status.map(|s| s.success()).unwrap_or(false) && ssh::test_connection(cfg).await.is_ok() {
-            util::ok("key installed — SSH works");
-            return Ok(());
-        }
-    }
-
-    // Fallback: the host may have password auth disabled. Guide the manual step.
-    println!();
-    util::warn("couldn't install the key automatically (password login may be disabled).");
-    println!("  Run this {} the host, or paste the key into its ~/.ssh/authorized_keys:\n", "on".italic());
-    println!(
-        "      {}\n",
-        format!(
-            "mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo '{}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys",
-            pubkey.trim()
-        )
-        .cyan()
-    );
+    util::warn("this machine isn't authorized on the donor yet — setting that up now.");
 
     if yes {
-        anyhow::bail!("key not authorized and --yes was set; authorize it and re-run");
+        // Non-interactive: the password route needs a human, so go straight to
+        // the one route that can't prompt us.
+        return pair_route(cfg, pubkey).await;
     }
 
+    const PASSWORD: &str = "Use the donor's login password (once, right here)";
+    const PAIR: &str = "Pair from the donor instead (no password needed)";
+
+    let mut choice =
+        inquire::Select::new("How should I authorize this machine?", vec![PASSWORD, PAIR])
+            .with_help_message("Both happen inside runtime-orbit — nothing to copy or paste")
+            .prompt()
+            .context("cancelled")?;
+
     loop {
-        let _ = inquire::Text::new("Press Enter once the key is added (or type 'skip' to abort):")
-            .with_default("")
-            .prompt();
-        if ssh::test_connection(cfg).await.is_ok() {
-            util::ok("SSH works now");
-            return Ok(());
+        if choice == PASSWORD {
+            util::step(&format!(
+                "Connecting to {} — type that machine's login password when asked…",
+                cfg.ssh_target()
+            ));
+            let label = metrics::local_vitals().await.hostname;
+            match ssh::install_key_interactive(cfg, pubkey, &label).await {
+                Ok(()) => {
+                    if ssh::test_connection(cfg).await.is_ok() {
+                        util::ok("authorized — SSH works without a password from now on");
+                        return Ok(());
+                    }
+                    util::warn(
+                        "the key was written but key-based login still fails — trying pairing.",
+                    );
+                }
+                Err(e) => {
+                    util::warn(&format!("that didn't work: {e:#}"));
+                }
+            }
+            println!();
+            choice = PAIR;
+            continue;
         }
-        util::warn("still can't connect — check the address/user and that the line was added exactly.");
+
+        // Pairing route.
+        pair_route(cfg, pubkey).await?;
+        return Ok(());
     }
 }
 
-/// Prove transparency: run a tiny container on the host and curl it via localhost.
+/// Open the pairing listener and wait for the donor to pull the key.
+async fn pair_route(cfg: &Config, pubkey: &str) -> Result<()> {
+    let vitals = metrics::local_vitals().await;
+    let my_ip = vitals
+        .ip
+        .clone()
+        .unwrap_or_else(|| "<this-machine-ip>".into());
+
+    crate::commands::pair::serve(
+        pubkey,
+        &vitals.hostname,
+        &my_ip,
+        crate::pairing::DEFAULT_PORT,
+        10,
+    )
+    .await?;
+
+    // The donor has the key now; confirm it actually took.
+    for _ in 0..10 {
+        if ssh::test_connection(cfg).await.is_ok() {
+            util::ok("authorized — SSH works without a password from now on");
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    }
+    anyhow::bail!(
+        "the donor picked up the key, but SSH still refuses it.\n\
+         Run `runtime-orbit donor doctor` on {} to see why (SSH off? wrong user?).",
+        cfg.donor_addr
+    )
+}
+
+/// Prove transparency: run a tiny container on the donor and curl it via localhost.
 async fn self_test() -> Result<()> {
-    util::step("Running an end-to-end self-test (nginx on the host → curl localhost)…");
+    util::step("Running an end-to-end self-test (nginx on the donor → curl localhost)…");
     let port = free_local_port().unwrap_or(8080);
-    let name = "orbit-selftest";
+    let name = "runtime-orbit-selftest";
     docker_quiet(&["rm", "-f", name]).await;
 
-    // Pull first (shows progress) so the run below is instant.
     println!("  pulling a small test image (nginx:alpine)…");
     docker(&["pull", "nginx:alpine"]).await?;
 
     docker(&[
-        "run", "-d", "--rm", "-p", &format!("{port}:80"), "--name", name, "nginx:alpine",
+        "run",
+        "-d",
+        "--rm",
+        "-p",
+        &format!("{port}:80"),
+        "--name",
+        name,
+        "nginx:alpine",
     ])
     .await
     .context("could not start the test container")?;
 
-    // Give the reconciler a moment to open the forward.
     let mut ok = false;
     for _ in 0..15 {
         tokio::time::sleep(std::time::Duration::from_millis(700)).await;
@@ -227,7 +310,7 @@ async fn self_test() -> Result<()> {
 
     if ok {
         util::ok(&format!(
-            "self-test passed — a container on the host answered on localhost:{port}"
+            "self-test passed — a container on the donor answered on localhost:{port}"
         ));
         Ok(())
     } else {
@@ -263,7 +346,14 @@ async fn docker_quiet(args: &[&str]) {
 
 async fn curl_ok(port: u16) -> bool {
     tokio::process::Command::new("curl")
-        .args(["-s", "-o", "/dev/null", "--max-time", "5", &format!("http://localhost:{port}")])
+        .args([
+            "-s",
+            "-o",
+            "/dev/null",
+            "--max-time",
+            "5",
+            &format!("http://localhost:{port}"),
+        ])
         .status()
         .await
         .map(|s| s.success())

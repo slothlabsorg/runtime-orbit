@@ -1,4 +1,4 @@
-//! `orbit service` — run orbit as a background login service so the docker
+//! `runtime-runtime-orbit.service` — run the borrow as a background login service so it
 //! delegation + port forwarding come back automatically after a reboot/login.
 //!
 //! macOS → a launchd LaunchAgent. Linux → a systemd --user unit. Windows →
@@ -9,17 +9,17 @@ use anyhow::{Context, Result};
 use crate::config;
 use crate::util;
 
-const LABEL: &str = "org.slothlabs.orbit";
+const LABEL: &str = "org.slothlabs.runtime-orbit";
 
-fn orbit_bin() -> Result<String> {
+fn binary_path() -> Result<String> {
     Ok(std::env::current_exe()
-        .context("locating the orbit binary")?
+        .context("locating the runtime-orbit binary")?
         .to_string_lossy()
         .into_owned())
 }
 
 /// A PATH that includes where docker/ssh usually live (login services get a
-/// minimal PATH otherwise, and orbit shells out to both).
+/// minimal PATH otherwise, and runtime-orbit shells out to both).
 fn service_path() -> String {
     let mut dirs = vec![
         "/opt/homebrew/bin".to_string(),
@@ -43,11 +43,13 @@ mod platform {
 
     fn plist_path() -> Result<std::path::PathBuf> {
         let home = dirs::home_dir().context("no home dir")?;
-        Ok(home.join("Library/LaunchAgents").join(format!("{LABEL}.plist")))
+        Ok(home
+            .join("Library/LaunchAgents")
+            .join(format!("{LABEL}.plist")))
     }
 
     pub async fn install() -> Result<()> {
-        let bin = orbit_bin()?;
+        let bin = binary_path()?;
         let log = config::run_dir()?.join("service.log");
         let plist = plist_path()?;
         if let Some(parent) = plist.parent() {
@@ -119,17 +121,17 @@ mod platform {
 
     fn unit_path() -> Result<std::path::PathBuf> {
         let home = dirs::home_dir().context("no home dir")?;
-        Ok(home.join(".config/systemd/user/orbit.service"))
+        Ok(home.join(".config/systemd/user/runtime-orbit.service"))
     }
 
     pub async fn install() -> Result<()> {
-        let bin = orbit_bin()?;
+        let bin = binary_path()?;
         let unit = unit_path()?;
         if let Some(parent) = unit.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let contents = format!(
-            "[Unit]\nDescription=orbit — remote Docker + port forwarding\nAfter=network-online.target\n\n\
+            "[Unit]\nDescription=runtime-orbit — borrowed container runtime + port forwarding\nAfter=network-online.target\n\n\
              [Service]\nType=simple\nExecStart={bin} up --foreground\nEnvironment=PATH={path}\nRestart=on-failure\nRestartSec=5\n\n\
              [Install]\nWantedBy=default.target\n",
             bin = bin,
@@ -137,15 +139,23 @@ mod platform {
         );
         std::fs::write(&unit, contents).with_context(|| format!("writing {}", unit.display()))?;
         util::run("systemctl", &["--user", "daemon-reload"]).await?;
-        util::run("systemctl", &["--user", "enable", "--now", "orbit.service"]).await?;
-        util::ok("installed + started systemd user unit orbit.service");
+        util::run(
+            "systemctl",
+            &["--user", "enable", "--now", "runtime-orbit.service"],
+        )
+        .await?;
+        util::ok("installed + started systemd user unit runtime-orbit.service");
         util::info("unit", &unit.to_string_lossy());
-        util::info("logs", "journalctl --user -u orbit.service -f");
+        util::info("logs", "journalctl --user -u runtime-orbit.service -f");
         Ok(())
     }
 
     pub async fn uninstall() -> Result<()> {
-        let _ = util::capture("systemctl", &["--user", "disable", "--now", "orbit.service"]).await;
+        let _ = util::capture(
+            "systemctl",
+            &["--user", "disable", "--now", "runtime-orbit.service"],
+        )
+        .await;
         let unit = unit_path()?;
         if unit.exists() {
             std::fs::remove_file(&unit)?;
@@ -156,10 +166,13 @@ mod platform {
     }
 
     pub async fn status() -> Result<()> {
-        let active = util::capture("systemctl", &["--user", "is-active", "orbit.service"])
-            .await
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "active")
-            .unwrap_or(false);
+        let active = util::capture(
+            "systemctl",
+            &["--user", "is-active", "runtime-orbit.service"],
+        )
+        .await
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "active")
+        .unwrap_or(false);
         report(active, &unit_path()?.to_string_lossy());
         Ok(())
     }
@@ -172,49 +185,55 @@ mod platform {
     use owo_colors::OwoColorize;
 
     pub async fn install() -> Result<()> {
-        let bin = orbit_bin()?;
-        util::header("Windows — run orbit at login (Task Scheduler)");
+        let bin = binary_path()?;
+        util::header("Windows — run runtime-orbit at login (Task Scheduler)");
         println!("  The easiest way on Windows is a scheduled task. In PowerShell:\n");
         println!(
             "      {}",
             format!(
-                "schtasks /Create /TN orbit /SC ONLOGON /TR \"{bin} up --foreground\" /RL LIMITED"
+                "schtasks /Create /TN runtime-orbit /SC ONLOGON /TR \"{bin} up --foreground\" /RL LIMITED"
             )
             .cyan()
         );
-        println!("\n  Remove it later with: {}", "schtasks /Delete /TN orbit /F".cyan());
+        println!(
+            "\n  Remove it later with: {}",
+            "schtasks /Delete /TN runtime-orbit /F".cyan()
+        );
         Ok(())
     }
 
     pub async fn uninstall() -> Result<()> {
-        util::info("windows", "remove with: schtasks /Delete /TN orbit /F");
+        util::info(
+            "windows",
+            "remove with: schtasks /Delete /TN runtime-orbit /F",
+        );
         Ok(())
     }
 
     pub async fn status() -> Result<()> {
-        util::info("windows", "check with: schtasks /Query /TN orbit");
+        util::info("windows", "check with: schtasks /Query /TN runtime-orbit");
         Ok(())
     }
 }
 
 fn report(installed_and_running: bool, location: &str) {
     if installed_and_running {
-        util::ok("orbit service is installed and running");
+        util::ok("runtime-orbit.service is installed and running");
     } else {
-        util::warn("orbit service is not running (install it with `orbit service install`)");
+        util::warn("runtime-orbit.service is not running (install it with `runtime-orbit.service install`)");
     }
     util::info("location", location);
 }
 
 pub async fn install() -> Result<()> {
-    util::header("orbit service install");
+    util::header("runtime-orbit.service install");
     platform::install().await
 }
 pub async fn uninstall() -> Result<()> {
-    util::header("orbit service uninstall");
+    util::header("runtime-orbit.service uninstall");
     platform::uninstall().await
 }
 pub async fn status() -> Result<()> {
-    util::header("orbit service");
+    util::header("runtime-orbit.service");
     platform::status().await
 }

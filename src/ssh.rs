@@ -37,7 +37,79 @@ fn control_opts() -> Result<Vec<String>> {
     ])
 }
 
-/// Generate the orbit ed25519 key pair if it does not exist. Returns the public key.
+/// Install our public key on the donor over an interactive SSH session.
+///
+/// This is the in-app replacement for asking the user to run `ssh-copy-id`: we
+/// inherit the terminal so OpenSSH's own password prompt appears inside the
+/// running command, and we do the `authorized_keys` edit ourselves rather than
+/// depending on `ssh-copy-id` being installed. The key also lands in
+/// `~/.runtime-orbit/inbox/` on the donor so `runtime-orbit donor pending` can
+/// show it later as a record of who asked.
+///
+/// A failed password makes `ssh` exit non-zero, which we surface as an error; the
+/// caller then re-probes with key auth to confirm the install really took.
+pub async fn install_key_interactive(cfg: &Config, pubkey: &str, label: &str) -> Result<()> {
+    let key = pubkey.trim();
+    if key.contains('\'') || key.contains('\n') {
+        bail!("refusing to install a public key containing quotes or newlines");
+    }
+    let safe_label: String = label
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '.' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+
+    // Idempotent, permission-fixing, and it records the request in the inbox.
+    let script = format!(
+        "set -e; \
+         mkdir -p ~/.ssh; chmod 700 ~/.ssh; \
+         touch ~/.ssh/authorized_keys; chmod 600 ~/.ssh/authorized_keys; \
+         if ! grep -qF '{key}' ~/.ssh/authorized_keys; then printf '%s\\n' '{key}' >> ~/.ssh/authorized_keys; fi; \
+         mkdir -p ~/.runtime-orbit/inbox; chmod 700 ~/.runtime-orbit/inbox 2>/dev/null || true; \
+         printf '%s\\n' '{key}' > ~/.runtime-orbit/inbox/{safe_label}.pub; \
+         echo RUNTIME_ORBIT_KEY_INSTALLED"
+    );
+
+    // Password auth needs a TTY, so inherit stdio and capture nothing. We verify
+    // the outcome with a follow-up key-auth probe instead of parsing output.
+    let args = vec![
+        "-o".to_string(),
+        "StrictHostKeyChecking=accept-new".into(),
+        "-o".into(),
+        "ConnectTimeout=15".into(),
+        "-o".into(),
+        // Don't let a half-configured agent key silently win or fail us.
+        "IdentitiesOnly=no".into(),
+        "-p".into(),
+        cfg.ssh_port.to_string(),
+        cfg.ssh_target(),
+        script,
+    ];
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    tracing::debug!(target = %cfg.ssh_target(), "installing public key over interactive ssh");
+
+    let status = tokio::process::Command::new("ssh")
+        .args(&refs)
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .status()
+        .await
+        .context("could not run ssh")?;
+
+    if !status.success() {
+        bail!("the donor rejected the connection (wrong password, or SSH is not enabled there)");
+    }
+    Ok(())
+}
+
+/// Generate this machine's ed25519 key pair if it does not exist. Returns the
+/// public key. The comment is what donors match on to count their borrowers.
 pub async fn ensure_key() -> Result<String> {
     let key = config::ssh_key_path()?;
     let pubkey = key.with_extension("pub");
@@ -50,7 +122,7 @@ pub async fn ensure_key() -> Result<String> {
                 "-N",
                 "",
                 "-C",
-                "orbit",
+                "runtime-orbit",
                 "-f",
                 &key.to_string_lossy(),
             ],
@@ -76,12 +148,11 @@ pub async fn test_connection(cfg: &Config) -> Result<()> {
     tracing::trace!(?refs, "ssh (test_connection)");
     if !util::succeeds("ssh", &refs).await {
         bail!(
-            "cannot reach {} over SSH with the orbit key.\n\
-             Make sure the host ran `orbit host init` and authorized the key,\n\
-             or run: ssh-copy-id -i {} {}",
+            "cannot reach {} over SSH with this machine's key.\n\
+             Fix it from here with `runtime-orbit setup --ip {}` — it authorizes this\n\
+             machine on the donor, with or without a password.",
             cfg.ssh_target(),
-            config::ssh_key_path()?.with_extension("pub").display(),
-            cfg.ssh_target()
+            cfg.donor_addr
         );
     }
     Ok(())

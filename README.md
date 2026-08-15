@@ -1,164 +1,211 @@
-# orbit — run Docker on a beefier machine, transparently
+# runtime-orbit
 
-> Delegate your local Docker to a beefier machine on your LAN over SSH.
-> Heavy builds and containers run there; published ports come straight back
-> to your `localhost`. One command per machine.
+**Your laptop is out of RAM. The machine in the other room isn't.**
 
-Your laptop is the worst machine you own for running Docker — it's the one you
-also need for everything else. `orbit` moves the engine to the powerful box
-under your desk (another Mac, a gaming PC, a Linux server) without changing how
-you work: `docker`, `docker compose`, and anything that respects
-`docker context` keep working, and `docker run -p 8080:80` is still
-`curl localhost:8080` on your laptop.
+`runtime-orbit` points this machine's `docker` at *another* machine's container
+runtime over SSH, and forwards published container ports back to your
+`localhost` — so heavy builds and containers run over there, using its RAM, CPU
+and disk, while `docker run -p 8080:80` still answers on `localhost:8080` here.
 
-## Why it works
+No daemon to configure, no code to sync, no wrapper around `docker`. It manages a
+standard `docker context`, so every tool that respects `DOCKER_HOST` works
+unchanged.
 
-Docker already speaks to remote daemons over SSH (`DOCKER_HOST=ssh://`). That
-covers 90% — builds, disk and RAM live on the host. `orbit` adds the two things
-that make it usable every day:
+```
+┌─ this machine (borrower) ──────┐        ┌─ the other machine (donor) ────┐
+│  docker CLI                    │        │  Docker / OrbStack / Rancher   │
+│  localhost:8080  ◄─────────────┼─ ssh ──┼─►  nginx container :8080       │
+│  16 GB, mostly yours again     │        │  64 GB, doing the work         │
+└────────────────────────────────┘        └────────────────────────────────┘
+```
 
-1. **One-command setup per side.** Idempotent, engine-agnostic.
-2. **Automatic port forwarding.** `orbit` watches the remote daemon's event
-   stream and keeps `ssh -L` tunnels in sync with the set of published container
-   ports — so remote containers are reachable on your local `localhost`. This is
-   the piece that makes it feel transparent.
+## Two roles, two commands
 
-It manages a **standard `docker context`** (it does *not* wrap the `docker`
-binary), so it's natively compatible with Docker Desktop, OrbStack, Rancher
-Desktop and colima.
+| Role | What it is | Command |
+|---|---|---|
+| **borrower** | the machine that's low on RAM — your laptop | `runtime-orbit setup --ip <donor-ip>` |
+| **donor** | the machine lending its runtime — the beefy one | `runtime-orbit donor setup` |
+
+That's the whole setup. Everything else is optional.
 
 ## Install
 
-**macOS / Linux — Homebrew:**
+**macOS / Linux**
 
-```bash
-brew install slothlabsorg/tap/container-orbit
+```sh
+curl -fsSL https://slothlabs.org/install/runtime-orbit | sh
 ```
 
-**macOS / Linux — one-line script:**
+**Homebrew**
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/slothlabsorg/container-orbit/main/dist/install.sh | sh
+```sh
+brew install slothlabsorg/tap/runtime-orbit
 ```
 
-**Windows — PowerShell:**
+**Windows (PowerShell)**
 
 ```powershell
-irm https://raw.githubusercontent.com/slothlabsorg/container-orbit/main/dist/install.ps1 | iex
+irm https://slothlabs.org/install/runtime-orbit.ps1 | iex
 ```
 
-**From source:**
+Installs `runtime-orbit`, plus `r-orbit` and `orbit` as shortcuts. Prebuilt
+binaries for macOS (Intel + Apple Silicon), Linux (x86_64 + arm64) and Windows
+are on the [releases page](https://github.com/slothlabsorg/runtime-orbit/releases).
 
-```bash
-cargo build --release   # binary at target/release/orbit
+## Two minutes, start to finish
+
+On the **donor** — the machine with the RAM:
+
+```sh
+runtime-orbit donor setup
 ```
 
-## Quick start
+It checks the runtime is up, offers to switch on the SSH server and stop the
+machine sleeping (both need your admin password, both asked for right there), and
+prints the exact command for the other machine.
 
-The fastest path is the guided wizard — it finds the host on your LAN, sets up
-the SSH key (authorizing it if needed), links, and runs an end-to-end self-test:
+On the **borrower** — the machine that needs help:
 
-```bash
-orbit setup            # ~2 minutes, interactive — the recommended way to start
+```sh
+runtime-orbit setup --ip 192.168.1.20
 ```
 
-Prefer to do it by hand? The individual commands still work:
+It authorizes itself on the donor — either with the donor's login password, typed
+once inside the command, or with a 6-digit pairing code so no password is needed
+at all — then links, routes docker over, and proves it works by running nginx on
+the donor and curling it through your localhost.
 
-```bash
-# On the beefy machine (the host):
-orbit host setup                # checks Docker + SSH, prints the join string
+Nothing to copy, paste, or edit by hand. From then on:
 
-# On your laptop (the client):
-orbit link user@192.168.1.42    # installs the SSH key, detects the socket, makes a context
-orbit up                        # docker → host, opens the socket forward + port reconciler
-
-docker run -d -p 8080:80 nginx  # runs on the host
-curl localhost:8080             # …reachable here, automatically
-
-orbit status                    # link, connection, forwarded ports, remote CPU/RAM
-orbit down                      # restore your previous context, drop every forward
+```sh
+docker compose up          # runs on the donor
+curl localhost:8080        # answers from the donor
+runtime-orbit dashboard    # watch both machines live
+runtime-orbit down         # back to local docker
 ```
 
-## Commands
+## The dashboard
 
-| Command | Where | What it does |
-|---|---|---|
-| `orbit setup` | client | **Guided, zero-friction setup** — discover host, authorize key, link, up, self-test. |
-| `orbit host setup` / `host init` | host | Verify Docker + SSH, detect the socket adapter, print the join string. Idempotent. |
-| `orbit host add-key "<pubkey>"` | host | Authorize a client's SSH public key (when password SSH is disabled). |
-| `orbit link <user@host>` | client | Install the SSH key, detect the remote socket, create the `orbit` docker context. |
-| `orbit up [--foreground]` | client | Switch to the host, open the multiplexed SSH master + socket forward, start the port reconciler. |
-| `orbit down` | client | Restore the previous context, close every forward and the master connection. |
-| `orbit status` | client | Linked host, connection state, forwarded ports, remote resource usage. |
-| `orbit ports [add\|rm <port>]` | client | List active forwards; manually add/remove a TCP forward (non-Docker services). |
-| `orbit logs [-f]` | client | Show (and follow) the forwarder log. |
-| `orbit service install\|uninstall\|status` | client | Run orbit at login (launchd / systemd user unit). |
-| `orbit mcp` | client | Start the MCP server so AI assistants can drive orbit (see below). |
-| `orbit doctor` | both | Diagnose SSH, remote daemon, forwarded socket and context — with the fix for each. |
+```
+runtime-orbit  borrowing   14:32:07
 
-Add `-v`, `-vv`, or `-vvv` to any command for increasingly verbose logs (every
-ssh/forward action), and `--log-file <path>` to also write them to a file.
+  THIS MACHINE                          DONOR
+  macbook-dany                          dany@192.168.1.20
+  macOS 26.2 · arm64                    macOS 15.4 · arm64
+  192.168.1.8 · 10 cores                192.168.1.20 · 16 cores
+  RAM ███░░░░░░░  31%  7.4/24.0 GB      RAM ██░░░░░░░░  18%  11.8/64.0 GB
+  load 1.82 · up 3 days                 load 0.44 · up 12 days
 
-## Run it as a service
+  ROUTING
+  docker context     runtime-orbit → donor
+  ssh                dany@192.168.1.20:22 · master up · forwarder up
+  ports              localhost:8080  localhost:5432
 
-Keep the delegation + forwarding alive across logins/reboots:
+  BORROWED RIGHT NOW
+  carried by donor   8.4 GiB · 212% CPU · 6 container(s)
+  on this machine    0 container(s)
 
-```bash
-orbit service install     # launchd agent (macOS) or systemd --user unit (Linux)
-orbit service status
-orbit service uninstall
+  CONTAINER              IMAGE                          CPU        MEM     PORTS
+  api                    acme/api:dev                 42.1%    1.2 GiB      8080
+  postgres               postgres:16                   3.4%    0.8 GiB      5432
+
+  TRAFFIC
+  containers         ↓ 1.2 MB/s   ↑ 340 kB/s   (1.4 GB in / 220 MB out total)
+  donor network      ↓ 4.1 MB/s   ↑ 900 kB/s
+
+  → 8.4 GiB of RAM and 212% CPU are on 192.168.1.20 instead of here ♥
 ```
 
-## Talk to it from an AI assistant (MCP)
+`--once` for a single frame, `--json` for a machine-readable snapshot.
 
-orbit ships a built-in [MCP](https://modelcontextprotocol.io) server, so Claude
-(or any MCP client) can check status, bring orbit up/down, manage forwards, and
-run `doctor` in plain language:
+## Every command
 
-```bash
-# Claude Code:
-claude mcp add orbit -- orbit mcp
+**On the borrower** (this machine)
+
+| Command | What it does |
+|---|---|
+| `setup --ip <addr>` | the whole thing: authorize, link, route, self-test |
+| `doctor` | check every link in the chain, with a fix for each failure |
+| `up` / `down` | start / stop routing docker to the donor |
+| `status` | one-shot summary |
+| `dashboard` | live view of both machines (`--once`, `--json`, `-n <secs>`) |
+| `ports [add\|rm <port>]` | list or hand-manage forwarded TCP ports |
+| `engines` | which container runtimes exist on each machine |
+| `logs [-f]` | the port-forwarder's log |
+| `service install` | keep the borrow alive across logins (launchd/systemd) |
+| `pair` | offer this machine's key to a donor, no password |
+| `link <user@host>` | low-level link; `setup` calls this for you |
+
+**On the donor** (the beefy machine) — `donator` and `lender` also work
+
+| Command | What it does |
+|---|---|
+| `donor setup` | prepare to lend: runtime, SSH, sleep, pending requests |
+| `donor doctor` | can this machine lend? what's in the way? |
+| `donor status` | what it's lending right now, and to whom |
+| `donor pair <borrower-ip>` | pull a borrower's key over the LAN and authorize it |
+| `donor pending` | review pairing requests waiting for approval |
+| `donor allow "<pubkey>"` | authorize a key directly (`--iphost` pins it to one IP) |
+
+**Routing policy** — for when you don't want *everything* delegated
+
+| Command | What it does |
+|---|---|
+| `limits show` | budgets, and where the next container would land |
+| `limits set --max-ram 32 --local-ram-threshold 5` | borrow at most 32 GB; stay local until 5 GB is used here |
+| `route list` / `route add` / `route rm` | the routing table |
+| `route explain postgres:16` | why a given workload goes where it goes |
+| `docker <args>` | run one docker command through the table |
+
+**Other**
+
+| Command | What it does |
+|---|---|
+| `mcp` | MCP server (stdio) so AI assistants can drive it |
+| `funding` | it's free; here's where to chip in |
+
+## Keeping some things local
+
+Delegating everything is the default because it's usually right. When it isn't —
+a database whose disk latency you care about, a container that talks to a USB
+device — the routing table decides per workload:
+
+```sh
+runtime-orbit limits set --local-ram-threshold 5 --max-ram 32
+runtime-orbit route add 'postgres:*' --target local --note 'disk latency'
+runtime-orbit route add '*' --target donor
+
+runtime-orbit docker run -d postgres:16    # stays here
+runtime-orbit docker build -t api:dev .    # goes to the donor
 ```
 
-```jsonc
-// Claude Desktop — mcpServers entry:
-{ "mcpServers": { "orbit": { "command": "orbit", "args": ["mcp"] } } }
-```
+Rules are evaluated top to bottom, first match wins; anything unmatched falls
+through to the budgets. `route explain <image>` tells you which rule fired and
+why.
 
-Interactive setup stays in your terminal — the server points the assistant at
-`orbit setup` rather than trying to proxy prompts.
+## Requirements
 
-## How it works
+- **Both machines on the same LAN**, and an SSH server on the donor (`donor
+  setup` can switch it on).
+- **A container runtime on the donor**: Docker Desktop, OrbStack, Rancher
+  Desktop, colima, Lima, Podman or containerd — anything speaking the Docker
+  Engine API over a unix socket.
+- **The `docker` CLI on the borrower.** No engine needed here; that's the point.
+- macOS and Linux are fully supported on both sides. A Windows donor works via
+  WSL2 — run `donor setup` inside the distro.
 
-- **Transport:** OpenSSH, one multiplexed master connection
-  (`ControlMaster`/`ControlPath`) shared by all forwards.
-- **Docker redirection:** `orbit` forwards the remote daemon socket to a local
-  unix socket and points a standard `docker context` at it. (It avoids
-  `ssh://` endpoints, which need the `docker` binary on the remote's
-  non-interactive SSH `PATH` — a common breakage.)
-- **Port reconciler:** connects to the forwarded socket with
-  [`bollard`](https://crates.io/crates/bollard), subscribes to `/events`, and on
-  every event recomputes the published ports and opens/cancels
-  `ssh -O forward -L <port>:127.0.0.1:<port>` accordingly.
+## Docs
 
-## Host adapters
+Full guide, architecture diagrams and troubleshooting:
 
-`orbit` abstracts *how* the remote Docker socket is located behind a
-`HostAdapter` trait:
+- [`docs/GUIDE.md`](docs/GUIDE.md) — install, both roles, every command, diagrams
+- [slothlabs.org/runtime-orbit/docs](https://slothlabs.org/runtime-orbit/docs)
 
-- **`UnixSocketHost`** (macOS, Linux) — unix domain socket. **v1, complete — covers Mac→Mac.**
-- **`WindowsWslHost`** — Docker socket inside WSL2 via an SSH bridge. **planned (v1.1).**
-- **`WindowsNativeHost`** — named-pipe relay. **future.**
+## Built with love
 
-See [`docs/PLAN.md`](docs/PLAN.md) for the full design.
+runtime-orbit is free and open source, from [SlothLabs](https://slothlabs.org) —
+no company, no VC, just developers fixing their own friction so your laptop stops
+choking on Docker. If it saves you time and RAM,
+[supporting the work](https://slothlabs.org/pricing) keeps the tools coming. ♥
 
-## Support
-
-orbit is built with ♥ by SlothLabs — free and open source, forever. If it saves
-your laptop (and your RAM), consider supporting the work: run `orbit funding`, or
-visit the [funding page](https://slothlabs.org/pricing), [Ko-fi](https://ko-fi.com/slothlabs),
-or [GitHub Sponsors](https://github.com/sponsors/slothlabsorg).
-
-## License
-
-MIT
+MIT licensed.

@@ -1,5 +1,5 @@
 //! Best-effort LAN discovery: find hosts on the local /24 subnets that accept
-//! TCP connections on the SSH port. Used by `orbit setup` to suggest a host so
+//! TCP connections on the SSH port. Used by `runtime-orbit setup` to suggest a host so
 //! the user doesn't have to hunt for an IP address.
 
 use std::collections::BTreeSet;
@@ -43,9 +43,7 @@ pub fn local_ipv4s() -> Vec<Ipv4Addr> {
 
 fn is_private(ip: &Ipv4Addr) -> bool {
     let o = ip.octets();
-    o[0] == 10
-        || (o[0] == 172 && (16..=31).contains(&o[1]))
-        || (o[0] == 192 && o[1] == 168)
+    o[0] == 10 || (o[0] == 172 && (16..=31).contains(&o[1])) || (o[0] == 192 && o[1] == 168)
 }
 
 /// Scan the /24 of every local private interface for open `port`, returning the

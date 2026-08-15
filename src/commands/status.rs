@@ -1,4 +1,4 @@
-//! `orbit status` — link, connection, forwarded ports, remote resource usage.
+//! `runtime-orbit status` — link, connection, forwarded ports, remote resource usage.
 
 use anyhow::Result;
 use owo_colors::OwoColorize;
@@ -12,10 +12,10 @@ use crate::util;
 
 pub async fn run() -> Result<()> {
     let cfg = config::require_linked()?;
-    util::header("orbit status");
+    util::header("runtime-orbit status");
 
     // Link
-    util::info("host", &cfg.ssh_target());
+    util::info("donor", &cfg.ssh_target());
     util::info("adapter", &cfg.adapter.to_string());
     util::info("endpoint", &cfg.docker_endpoint());
     util::info("remote sock", &cfg.remote_socket);
@@ -25,7 +25,7 @@ pub async fn run() -> Result<()> {
         .await
         .unwrap_or_else(|_| "?".into());
     let ctx_line = if ctx == cfg.context_name {
-        format!("{ctx} {}", "(active — docker → host)".green())
+        format!("{ctx} {}", "(active — docker → donor)".green())
     } else {
         format!("{ctx} {}", "(local engine)".dimmed())
     };
@@ -38,7 +38,7 @@ pub async fn run() -> Result<()> {
 
     if !master {
         println!();
-        util::warn("not connected — run `orbit up`.");
+        util::warn("not connected — run `runtime-orbit up`.");
         return Ok(());
     }
 
@@ -78,7 +78,7 @@ async fn print_remote(cfg: &crate::config::Config) {
     };
 
     if let Some(r) = metrics::remote_metrics(&socket).await {
-        util::header("Remote engine");
+        util::header("Donor runtime");
         util::info("version", &r.version);
         util::info("CPUs", &r.ncpu.to_string());
         util::info("memory", &metrics::fmt_gib(r.mem_total));
@@ -89,7 +89,7 @@ async fn print_remote(cfg: &crate::config::Config) {
         util::info("images", &r.images.to_string());
 
         // The part that makes people fall in love: what your laptop ISN'T doing.
-        util::header("You're offloading to the host");
+        util::header("Carried by the donor");
         let load = metrics::remote_load(cfg).await;
         util::info(
             "processor",
@@ -103,7 +103,7 @@ async fn print_remote(cfg: &crate::config::Config) {
             util::info(
                 "RAM in use by containers",
                 &format!(
-                    "{} (of {} on the host)",
+                    "{} (of {} on the donor)",
                     metrics::fmt_gib_u(r.offloaded_mem),
                     metrics::fmt_gib(r.mem_total)
                 ),
@@ -113,7 +113,7 @@ async fn print_remote(cfg: &crate::config::Config) {
             "  {} {} running on {} — none of it on this laptop {}",
             "›".dimmed(),
             format!("{} containers", r.running).magenta(),
-            cfg.host_addr.white(),
+            cfg.donor_addr.white(),
             "♥".magenta(),
         );
     }
@@ -122,7 +122,7 @@ async fn print_remote(cfg: &crate::config::Config) {
     match forwarder::list_published(&socket).await {
         Ok(ports) if !ports.is_empty() => {
             for p in ports {
-                println!("  localhost:{p} {} host:{p}", "→".dimmed());
+                println!("  localhost:{p} {} donor:{p}", "→".dimmed());
             }
         }
         Ok(_) => println!(

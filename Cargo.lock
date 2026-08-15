@@ -252,26 +252,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
-name = "container-orbit"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bollard",
- "clap",
- "dirs",
- "futures-util",
- "inquire",
- "owo-colors",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "toml",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1051,6 +1031,26 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "runtime-orbit"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "bollard",
+ "clap",
+ "dirs",
+ "futures-util",
+ "inquire",
+ "owo-colors",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "rustversion"

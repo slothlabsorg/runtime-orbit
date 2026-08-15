@@ -1,17 +1,23 @@
 name: release
 
-# Tag a version to cut a release:  git tag v0.1.0 && git push --tags
+# Tag a version to cut a release:  git tag v0.2.0 && git push --tags
 on:
   push:
     tags:
       - "v*"
+  # Lets you re-run the whole thing against an existing tag from the UI.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)build, e.g. v0.2.0"
+        required: true
 
 permissions:
   contents: write
 
 jobs:
-  # Cross-compile the `orbit` binary for every supported platform and attach a
-  # per-target archive (+ sha256) to the GitHub Release for this tag.
+  # Cross-compile the `runtime-orbit` binary for every supported platform and
+  # attach a per-target archive (+ sha256) to the GitHub Release for this tag.
   binaries:
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
@@ -26,18 +32,36 @@ jobs:
           - { target: x86_64-pc-windows-msvc,      os: windows-latest }
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       # Builds for the target (using `cross` when needed, e.g. linux-aarch64),
-      # archives as orbit-<target>.{tar.gz,zip}, writes a .sha256, and uploads
-      # to the release for this tag (creating it if missing).
+      # archives as runtime-orbit-<target>.{tar.gz,zip}, writes a .sha256, and
+      # uploads to the release for this tag (creating it if missing).
       - name: Build & upload
         uses: taiki-e/upload-rust-binary-action@v1
         with:
-          bin: orbit
+          bin: runtime-orbit
           target: ${{ matrix.target }}
-          archive: orbit-$target
+          archive: runtime-orbit-$target
           checksum: sha256
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Ship the installers as release assets too, so the website can link to a
+  # stable URL that doesn't depend on the default branch.
+  installers:
+    needs: binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - name: Attach install scripts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: gh release upload "$TAG" dist/install.sh dist/install.ps1 --clobber
 
   # Bump the Homebrew formula in slothlabsorg/homebrew-tap after the binaries
   # are published. Requires a HOMEBREW_TAP_TOKEN secret (fine-grained PAT with
@@ -46,76 +70,85 @@ jobs:
   homebrew:
     needs: binaries
     runs-on: ubuntu-latest
-    if: ${{ !contains(github.ref_name, '-') }}   # skip prereleases (v1.0.0-rc1)
+    if: ${{ !contains(inputs.tag || github.ref_name, '-') }}   # skip prereleases (v1.0.0-rc1)
     env:
       TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
     steps:
       - name: Bump tap formula
         if: ${{ env.TAP_TOKEN != '' }}
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-          BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
           fetch_sha() { curl -fsSL "$BASE/$1.sha256" | awk '{print $1}'; }
-          SHA_ARM_MAC=$(fetch_sha orbit-aarch64-apple-darwin.tar.gz)
-          SHA_X86_MAC=$(fetch_sha orbit-x86_64-apple-darwin.tar.gz)
-          SHA_X86_LNX=$(fetch_sha orbit-x86_64-unknown-linux-gnu.tar.gz)
-          SHA_ARM_LNX=$(fetch_sha orbit-aarch64-unknown-linux-gnu.tar.gz)
+          SHA_ARM_MAC=$(fetch_sha runtime-orbit-aarch64-apple-darwin.tar.gz)
+          SHA_X86_MAC=$(fetch_sha runtime-orbit-x86_64-apple-darwin.tar.gz)
+          SHA_X86_LNX=$(fetch_sha runtime-orbit-x86_64-unknown-linux-gnu.tar.gz)
+          SHA_ARM_LNX=$(fetch_sha runtime-orbit-aarch64-unknown-linux-gnu.tar.gz)
 
           git clone "https://x-access-token:${TAP_TOKEN}@github.com/slothlabsorg/homebrew-tap.git" tap
           cd tap
           mkdir -p Formula
-          cat > Formula/container-orbit.rb <<EOF
-          class ContainerOrbit < Formula
-            desc "Delegate Docker to a beefier LAN machine over SSH, with automatic port forwarding"
-            homepage "https://slothlabs.org/container-orbit"
+          cat > Formula/runtime-orbit.rb <<EOF
+          class RuntimeOrbit < Formula
+            desc "Borrow a beefier machine's container runtime over your LAN, transparently"
+            homepage "https://slothlabs.org/runtime-orbit"
             version "${VERSION}"
             license "MIT"
 
             on_macos do
               on_arm do
-                url "${BASE}/orbit-aarch64-apple-darwin.tar.gz"
+                url "${BASE}/runtime-orbit-aarch64-apple-darwin.tar.gz"
                 sha256 "${SHA_ARM_MAC}"
               end
               on_intel do
-                url "${BASE}/orbit-x86_64-apple-darwin.tar.gz"
+                url "${BASE}/runtime-orbit-x86_64-apple-darwin.tar.gz"
                 sha256 "${SHA_X86_MAC}"
               end
             end
 
             on_linux do
               on_arm do
-                url "${BASE}/orbit-aarch64-unknown-linux-gnu.tar.gz"
+                url "${BASE}/runtime-orbit-aarch64-unknown-linux-gnu.tar.gz"
                 sha256 "${SHA_ARM_LNX}"
               end
               on_intel do
-                url "${BASE}/orbit-x86_64-unknown-linux-gnu.tar.gz"
+                url "${BASE}/runtime-orbit-x86_64-unknown-linux-gnu.tar.gz"
                 sha256 "${SHA_X86_LNX}"
               end
             end
 
             def install
-              bin.install "orbit"
+              bin.install "runtime-orbit"
+              bin.install_symlink bin/"runtime-orbit" => "r-orbit"
+              bin.install_symlink bin/"runtime-orbit" => "orbit"
             end
 
             test do
-              assert_match "orbit", shell_output("#{bin}/orbit --version")
+              assert_match "runtime-orbit", shell_output("#{bin}/runtime-orbit --version")
             end
           end
           EOF
+
+          # The pre-0.2 formula would keep shadowing the `orbit` symlink we now
+          # install, so retire it in the same commit as the rename.
+          rm -f Formula/container-orbit.rb
+
           git config user.name "slothlabs-ci"
           git config user.email "ci@slothlabs.org"
-          git add Formula/container-orbit.rb
-          git commit -m "container-orbit ${VERSION}" || echo "no changes"
+          git add -A Formula
+          git commit -m "runtime-orbit ${VERSION}" || echo "no changes"
           git push
 
 # ── Signed native installers (.pkg / .exe) ──────────────────────────────────
-# These need your signing certificates and are intentionally left as a follow-up:
-#   • macOS .pkg  → build with `pkgbuild --identifier org.slothlabs.orbit \
-#       --install-location /usr/local/bin --root <dir-with-orbit> orbit.pkg`,
-#       then `productsign`/`notarytool` using a Developer ID cert
+# These need signing certificates and are intentionally a follow-up:
+#   • macOS .pkg  → `pkgbuild --identifier org.slothlabs.runtime-orbit \
+#       --install-location /usr/local/bin --root <dir-with-binary> runtime-orbit.pkg`,
+#       then `productsign`/`notarytool` with a Developer ID cert
 #       (secrets: MACOS_CERT_P12, MACOS_CERT_PASSWORD, AC_API_KEY…).
 #   • Windows .exe/.msi → `signtool sign /fd SHA256` with an Authenticode cert
-#       (secret: WINDOWS_PFX_BASE64, WINDOWS_PFX_PASSWORD).
-# Until those secrets exist, brew + install.sh + install.ps1 (below) are the
-# frictionless install paths and need no signing.
+#       (secrets: WINDOWS_PFX_BASE64, WINDOWS_PFX_PASSWORD).
+# Until those secrets exist, brew + install.sh + install.ps1 are the frictionless
+# install paths and need no signing.

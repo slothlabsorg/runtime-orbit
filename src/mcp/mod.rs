@@ -1,8 +1,8 @@
 //! A minimal MCP (Model Context Protocol) server over stdio, so AI assistants
-//! can drive orbit in plain language.
+//! can drive runtime-orbit in plain language.
 //!
 //! MCP's stdio transport is newline-delimited JSON-RPC 2.0. We keep stdout
-//! exclusively for protocol messages and route each tool call to the orbit CLI
+//! exclusively for protocol messages and route each tool call to the CLI
 //! as a subprocess (capturing its output) — that way the human-facing `println!`
 //! output of the commands never corrupts the JSON channel.
 
@@ -13,19 +13,27 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 const PROTOCOL_VERSION: &str = "2024-11-05";
 
 const INSTRUCTIONS: &str = "\
-orbit delegates the user's local Docker to a beefier machine on their LAN over SSH, \
-and forwards published container ports back to their localhost so it feels local.
+runtime-orbit lets a machine that is low on RAM (the *borrower*) use another machine's \
+container runtime (the *donor*) over SSH, forwarding published container ports back to \
+the borrower's localhost so it feels local.
 
-Typical flow:
-- `status` — is orbit linked/up? what's forwarded? remote CPU/RAM?
-- `up` / `down` — start/stop delegating Docker to the host.
-- `link` — link to a host (needs the SSH key already authorized; otherwise tell the \
-user to run `orbit setup` in a terminal — it's interactive).
+Typical flow on a borrower:
+- `status` / `dashboard` — is it linked and up? what's forwarded? both machines' RAM, \
+CPU, traffic, and the containers the donor is carrying. `dashboard` returns JSON.
+- `up` / `down` — start/stop routing docker to the donor.
+- `doctor` — diagnose SSH, the donor's runtime, the forwarded socket, the docker context.
+- `engines` — which container runtimes exist on each machine.
 - `add_forward` / `remove_forward` / `list_forwards` — manage TCP port tunnels.
-- `doctor` — diagnose SSH, the remote daemon, the forwarded socket and the docker context.
+- `limits_show` / `limits_set` — RAM budgets: how much to borrow, and how much local RAM \
+to use before new work is routed to the donor.
+- `route_list` / `route_add` / `route_explain` — the routing table deciding local vs donor \
+per workload.
 
-For first-time setup, host authorization, or anything interactive, tell the user to run \
-`orbit setup` in their terminal — do not try to proxy interactive prompts.";
+On a donor: `donor_status` and `donor_doctor`.
+
+First-time setup is interactive (it may ask for a password or show a pairing code), so \
+for that tell the user to run `runtime-orbit setup --ip <donor-ip>` in their terminal \
+rather than trying to proxy the prompts. `setup_hint` returns the exact command.";
 
 /// Serve MCP over stdio until stdin closes.
 pub async fn serve() -> Result<()> {
@@ -81,7 +89,7 @@ fn initialize_result() -> Value {
     json!({
         "protocolVersion": PROTOCOL_VERSION,
         "capabilities": { "tools": {} },
-        "serverInfo": { "name": "orbit", "version": env!("CARGO_PKG_VERSION") },
+        "serverInfo": { "name": "runtime-orbit", "version": env!("CARGO_PKG_VERSION") },
         "instructions": INSTRUCTIONS,
     })
 }
@@ -107,14 +115,55 @@ fn no_args() -> Value {
 
 fn tool_specs() -> Value {
     json!([
-        { "name": "status", "description": "Show orbit link, connection state, forwarded ports, and remote CPU/RAM/image counts.", "inputSchema": no_args() },
-        { "name": "up", "description": "Delegate Docker to the linked host and start forwarding published ports. Detached.", "inputSchema": no_args() },
-        { "name": "down", "description": "Stop forwarding, close the SSH connection, and restore the previous docker context.", "inputSchema": no_args() },
-        { "name": "doctor", "description": "Diagnose SSH, the remote docker daemon, the forwarded socket, and the docker context.", "inputSchema": no_args() },
-        { "name": "list_forwards", "description": "List the ports currently forwarded from the host to localhost.", "inputSchema": no_args() },
+        { "name": "status", "description": "Show the link, connection state, forwarded ports, and the donor's CPU/RAM/image counts.", "inputSchema": no_args() },
+        { "name": "dashboard", "description": "Full machine-readable snapshot as JSON: both machines (OS, cores, RAM used/available, IP, load), connection and routing state, the donor's containers with CPU/memory/network, forwarded ports, and the configured budgets.", "inputSchema": no_args() },
+        { "name": "up", "description": "Route Docker to the linked donor and start forwarding published ports. Detached.", "inputSchema": no_args() },
+        { "name": "down", "description": "Stop forwarding, close the SSH connection, and put Docker back on this machine's engine.", "inputSchema": no_args() },
+        { "name": "doctor", "description": "Diagnose SSH, the donor's runtime, the forwarded socket, and the docker context. Returns fixes.", "inputSchema": no_args() },
+        { "name": "engines", "description": "List the container runtimes present on this machine and on the donor, and which socket is in use.", "inputSchema": no_args() },
+        { "name": "list_forwards", "description": "List the ports currently forwarded from the donor to localhost.", "inputSchema": no_args() },
+        { "name": "donor_status", "description": "Run on a donor: what it is lending right now, and to whom.", "inputSchema": no_args() },
+        { "name": "donor_doctor", "description": "Run on a donor: whether it can lend its runtime, and what to fix.", "inputSchema": no_args() },
+        { "name": "limits_show", "description": "Show the RAM/CPU budgets and where the next container would run.", "inputSchema": no_args() },
+        { "name": "route_list", "description": "Show the routing table (which workloads run local vs on the donor).", "inputSchema": no_args() },
+        {
+            "name": "limits_set",
+            "description": "Change the budgets. Values are in GB; pass the string \"off\" to clear one.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "max_ram": { "type": "string", "description": "Ceiling on borrowed RAM in GB, or \"off\"" },
+                    "local_ram_threshold": { "type": "string", "description": "Local RAM in use before new work goes to the donor, in GB, or \"off\"" },
+                    "prefer": { "type": "string", "enum": ["auto", "local", "donor"] }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "route_add",
+            "description": "Append a routing rule. First match wins, so add specific patterns first.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "pattern": { "type": "string", "description": "Glob matched against image/container name, e.g. postgres:*" },
+                    "target": { "type": "string", "enum": ["local", "donor"] },
+                    "note": { "type": "string" }
+                },
+                "required": ["pattern", "target"]
+            }
+        },
+        {
+            "name": "route_explain",
+            "description": "Explain where a given image or container name would run, and why.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "image": { "type": "string" } },
+                "required": ["image"]
+            }
+        },
         {
             "name": "link",
-            "description": "Link this machine to a host. The SSH key must already be authorized (else tell the user to run `orbit setup`).",
+            "description": "Link this machine to a donor. Authorization must already work (else use setup_hint).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -126,7 +175,7 @@ fn tool_specs() -> Value {
         },
         {
             "name": "add_forward",
-            "description": "Forward an extra TCP port from the host to localhost.",
+            "description": "Forward an extra TCP port from the donor to localhost.",
             "inputSchema": { "type": "object", "properties": { "port": { "type": "integer" } }, "required": ["port"] }
         },
         {
@@ -136,7 +185,7 @@ fn tool_specs() -> Value {
         },
         {
             "name": "setup_hint",
-            "description": "How to run first-time interactive setup. Returns the exact command for the user to run in a terminal.",
+            "description": "How to run first-time setup, which is interactive. Returns the exact command for the user to run in a terminal.",
             "inputSchema": no_args()
         }
     ])
@@ -149,10 +198,64 @@ async fn call_tool(params: &Value) -> Result<String> {
 
     let argv: Vec<String> = match name {
         "status" => vec!["status".into()],
+        "dashboard" => vec!["dashboard".into(), "--once".into(), "--json".into()],
         "up" => vec!["up".into()],
         "down" => vec!["down".into()],
         "doctor" => vec!["doctor".into()],
+        "engines" => vec!["engines".into()],
         "list_forwards" => vec!["ports".into()],
+        "donor_status" => vec!["donor".into(), "status".into()],
+        "donor_doctor" => vec!["donor".into(), "doctor".into()],
+        "limits_show" => vec!["limits".into(), "show".into()],
+        "route_list" => vec!["route".into(), "list".into()],
+        "limits_set" => {
+            let mut v = vec!["limits".to_string(), "set".to_string()];
+            for (key, flag) in [
+                ("max_ram", "--max-ram"),
+                ("local_ram_threshold", "--local-ram-threshold"),
+                ("prefer", "--prefer"),
+            ] {
+                if let Some(val) = args.get(key).and_then(|x| x.as_str()) {
+                    v.push(flag.into());
+                    v.push(val.to_string());
+                }
+            }
+            if v.len() == 2 {
+                anyhow::bail!(
+                    "limits_set needs at least one of: max_ram, local_ram_threshold, prefer"
+                );
+            }
+            v
+        }
+        "route_add" => {
+            let pattern = args
+                .get("pattern")
+                .and_then(|p| p.as_str())
+                .ok_or_else(|| anyhow::anyhow!("route_add requires a 'pattern'"))?;
+            let target = args
+                .get("target")
+                .and_then(|t| t.as_str())
+                .ok_or_else(|| anyhow::anyhow!("route_add requires a 'target'"))?;
+            let mut v = vec![
+                "route".to_string(),
+                "add".to_string(),
+                pattern.to_string(),
+                "--target".to_string(),
+                target.to_string(),
+            ];
+            if let Some(note) = args.get("note").and_then(|n| n.as_str()) {
+                v.push("--note".into());
+                v.push(note.to_string());
+            }
+            v
+        }
+        "route_explain" => {
+            let image = args
+                .get("image")
+                .and_then(|i| i.as_str())
+                .ok_or_else(|| anyhow::anyhow!("route_explain requires an 'image'"))?;
+            vec!["route".into(), "explain".into(), image.to_string()]
+        }
         "link" => {
             let target = args
                 .get("target")
@@ -180,19 +283,24 @@ async fn call_tool(params: &Value) -> Result<String> {
             vec!["ports".into(), "rm".into(), port.to_string()]
         }
         "setup_hint" => {
-            return Ok("Run `orbit setup` in a terminal. It's interactive: it discovers \
-                the host on your LAN, authorizes the SSH key (asking for the host password \
-                once if needed), links, and runs an end-to-end self-test."
-                .to_string())
+            return Ok(
+                "Run `runtime-orbit setup --ip <donor-ip>` in a terminal (omit --ip to \
+                pick from a LAN scan). It is interactive: it authorizes this machine on the \
+                donor — either by asking for the donor's login password once, or by showing a \
+                6-digit pairing code to use with `runtime-orbit donor pair <this-ip>` on the \
+                donor — then links, brings the borrow up, and runs an end-to-end self-test. \
+                On the donor itself, the equivalent is `runtime-orbit donor setup`."
+                    .to_string(),
+            )
         }
         other => anyhow::bail!("unknown tool: {other}"),
     };
 
-    run_orbit(&argv).await
+    run_cli(&argv).await
 }
 
 /// Invoke this same binary with the given args, capturing combined output.
-async fn run_orbit(args: &[String]) -> Result<String> {
+async fn run_cli(args: &[String]) -> Result<String> {
     let exe = std::env::current_exe()?;
     let out = tokio::process::Command::new(exe)
         .args(args)

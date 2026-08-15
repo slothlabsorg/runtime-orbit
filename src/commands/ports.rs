@@ -1,4 +1,4 @@
-//! `orbit ports` — list docker-published forwards, or add/remove manual ones.
+//! `runtime-orbit ports` — list docker-published forwards, or add/remove manual ones.
 
 use anyhow::Result;
 use owo_colors::OwoColorize;
@@ -15,14 +15,14 @@ pub async fn list() -> Result<()> {
     match forwarder::list_published(&socket).await {
         Ok(ports) if !ports.is_empty() => {
             for p in ports {
-                println!("  localhost:{p} {} host:{p}", "→".dimmed());
+                println!("  localhost:{p} {} donor:{p}", "→".dimmed());
             }
         }
         Ok(_) => println!(
             "  {}",
-            "none (run a container with -p, or `orbit ports add <port>`)".dimmed()
+            "none (run a container with -p, or `runtime-orbit ports add <port>`)".dimmed()
         ),
-        Err(_) => util::warn("orbit is not up — run `orbit up` first."),
+        Err(_) => util::warn("orbit is not up — run `runtime-orbit up` first."),
     }
     Ok(())
 }
@@ -30,10 +30,10 @@ pub async fn list() -> Result<()> {
 pub async fn add(port: u16) -> Result<()> {
     let cfg = config::require_linked()?;
     if !ssh::master_alive(&cfg).await {
-        anyhow::bail!("orbit is not up — run `orbit up` first.");
+        anyhow::bail!("orbit is not up — run `runtime-orbit up` first.");
     }
     ssh::add_forward(&cfg, port).await?;
-    util::ok(&format!("forwarding localhost:{port} → host:{port}"));
+    util::ok(&format!("forwarding localhost:{port} → donor:{port}"));
     Ok(())
 }
 

@@ -3,7 +3,7 @@
 //! It talks to the remote daemon through the forwarded unix socket (set up by
 //! `ssh::start_master`), watches container events, and keeps the set of SSH TCP
 //! forwards in sync with the set of published container ports. Net effect:
-//! `docker run -p 8080:80` on the host ⇒ `curl localhost:8080` works on the laptop.
+//! `docker run -p 8080:80` on the donor ⇒ `curl localhost:8080` works on the borrower.
 
 use anyhow::{Context, Result};
 use bollard::container::ListContainersOptions;
@@ -56,8 +56,8 @@ async fn reconcile(cfg: &Config, current: &mut HashSet<u16>, desired: HashSet<u1
         match ssh::add_forward(cfg, port).await {
             Ok(()) => {
                 current.insert(port);
-                tracing::info!(port, "forwarding localhost:{port} -> host:{port}");
-                println!("  + forwarding localhost:{port} → host:{port}");
+                tracing::info!(port, "forwarding localhost:{port} -> donor:{port}");
+                println!("  + forwarding localhost:{port} → donor:{port}");
             }
             Err(e) => {
                 tracing::warn!(port, error = %e, "could not forward");
@@ -124,7 +124,7 @@ pub async fn run(cfg: &Config, socket: &Path) -> Result<()> {
         }
 
         // If the stream ended, wait and try again (keeping forwards intact). The
-        // process is stopped externally by `orbit down` (SIGTERM), not from here.
+        // process is stopped externally by `runtime-orbit down` (SIGTERM), not from here.
         if clean {
             tracing::debug!("event stream ended; reconnecting");
         }
@@ -138,7 +138,7 @@ pub async fn run(cfg: &Config, socket: &Path) -> Result<()> {
     }
 }
 
-/// Snapshot of the currently-published ports — used by `orbit status`/`ports`.
+/// Snapshot of the currently-published ports — used by `runtime-orbit status`/`ports`.
 pub async fn list_published(socket: &Path) -> Result<Vec<u16>> {
     let docker = connect(socket)?;
     let mut v: Vec<u16> = desired_ports(&docker).await?.into_iter().collect();
