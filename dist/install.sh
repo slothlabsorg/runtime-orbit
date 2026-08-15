@@ -1,5 +1,5 @@
 #!/bin/sh
-# runtime-orbit installer — macOS & Linux.
+# runtime-orbit installer - macOS and Linux.
 #
 #   curl -fsSL https://slothlabs.org/install/runtime-orbit | sh
 #   curl -fsSL https://raw.githubusercontent.com/slothlabsorg/runtime-orbit/main/dist/install.sh | sh
@@ -19,23 +19,23 @@ REPO="slothlabsorg/runtime-orbit"
 BIN="runtime-orbit"
 ALIASES="r-orbit orbit"
 
-say()  { printf '\033[36m▸\033[0m %s\n' "$1"; }
-ok()   { printf '\033[32m✓\033[0m %s\n' "$1"; }
+say()  { printf '\033[36m>\033[0m %s\n' "$1"; }
+ok()   { printf '\033[32mOK\033[0m %s\n' "$1"; }
 warn() { printf '\033[33m!\033[0m %s\n' "$1"; }
 die()  { printf '\033[31merror:\033[0m %s\n' "$1" >&2; exit 1; }
 
 os=$(uname -s)
 arch=$(uname -m)
 
-case "$os" in
+case "${os}" in
   Darwin) plat="apple-darwin" ;;
   Linux)  plat="unknown-linux-gnu" ;;
-  *) die "unsupported OS: $os — on Windows, run this inside a WSL2 distro" ;;
+  *) die "unsupported OS: ${os} - on Windows, run this inside a WSL2 distro" ;;
 esac
-case "$arch" in
+case "${arch}" in
   arm64|aarch64) cpu="aarch64" ;;
   x86_64|amd64)  cpu="x86_64" ;;
-  *) die "unsupported architecture: $arch" ;;
+  *) die "unsupported architecture: ${arch}" ;;
 esac
 target="${cpu}-${plat}"
 
@@ -52,39 +52,39 @@ url="${base}/${asset}"
 
 # Choose an install dir we can actually write to.
 dir="${ORBIT_INSTALL_DIR:-/usr/local/bin}"
-if [ ! -d "$dir" ] || [ ! -w "$dir" ]; then
-  dir="$HOME/.local/bin"
+if [ ! -d "${dir}" ] || [ ! -w "${dir}" ]; then
+  dir="${HOME}/.local/bin"
 fi
-mkdir -p "$dir"
+mkdir -p "${dir}"
 
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+trap 'rm -rf "${tmp}"' EXIT
 
-say "Downloading $asset…"
-curl -fsSL "$url" -o "$tmp/$asset" || die "download failed: $url"
-tar -xzf "$tmp/$asset" -C "$tmp"
-[ -f "$tmp/$BIN" ] || die "archive did not contain '$BIN'"
-install -m 0755 "$tmp/$BIN" "$dir/$BIN"
-ok "installed $BIN to $dir/$BIN"
+say "Downloading ${asset}"
+curl -fsSL "${url}" -o "${tmp}/${asset}" || die "download failed: ${url}"
+tar -xzf "${tmp}/${asset}" -C "${tmp}"
+[ -f "${tmp}/${BIN}" ] || die "archive did not contain '${BIN}'"
+install -m 0755 "${tmp}/${BIN}" "${dir}/${BIN}"
+ok "installed ${BIN} to ${dir}/${BIN}"
 
-# Short aliases. A symlink is enough — the CLI doesn't branch on argv[0].
-for a in $ALIASES; do
+# Short aliases. A symlink is enough: the CLI doesn't branch on argv[0].
+for a in ${ALIASES}; do
   # Don't clobber an unrelated binary that happens to share the name.
-  if [ -e "$dir/$a" ] && [ ! -L "$dir/$a" ]; then
-    warn "left $dir/$a alone (not a symlink — something else owns that name)"
+  if [ -e "${dir}/${a}" ] && [ ! -L "${dir}/${a}" ]; then
+    warn "left ${dir}/${a} alone (not a symlink; something else owns that name)"
     continue
   fi
-  ln -sf "$dir/$BIN" "$dir/$a" && ok "linked $a → $BIN"
+  ln -sf "${dir}/${BIN}" "${dir}/${a}" && ok "linked ${a} -> ${BIN}"
 done
 
-case ":$PATH:" in
-  *":$dir:"*) : ;;
-  *) warn "add $dir to your PATH:  export PATH=\"$dir:\$PATH\"" ;;
+case ":${PATH}:" in
+  *":${dir}:"*) : ;;
+  *) warn "add ${dir} to your PATH:  export PATH=\"${dir}:\$PATH\"" ;;
 esac
 
 echo
-ok "Next — on the machine that needs the RAM:"
+ok "Next - on the machine that needs the RAM:"
 printf '      \033[1mruntime-orbit setup --ip <donor-ip>\033[0m\n'
 echo
-printf '   …and on the machine lending its runtime:\n'
+printf '   ...and on the machine lending its runtime:\n'
 printf '      \033[1mruntime-orbit donor setup\033[0m\n'

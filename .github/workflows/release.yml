@@ -113,11 +113,16 @@ jobs:
           set -euo pipefail
           VERSION="${TAG#v}"
           BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
-          fetch_sha() { curl -fsSL "$BASE/$1.sha256" | awk '{print $1}'; }
-          SHA_ARM_MAC=$(fetch_sha runtime-orbit-aarch64-apple-darwin.tar.gz)
-          SHA_X86_MAC=$(fetch_sha runtime-orbit-x86_64-apple-darwin.tar.gz)
-          SHA_X86_LNX=$(fetch_sha runtime-orbit-x86_64-unknown-linux-gnu.tar.gz)
-          SHA_ARM_LNX=$(fetch_sha runtime-orbit-aarch64-unknown-linux-gnu.tar.gz)
+          # The upload action names the checksum after the *target*, not the
+          # archive: runtime-orbit-<target>.sha256, holding "<sha>  <archive>".
+          fetch_sha() { curl -fsSL "$BASE/runtime-orbit-$1.sha256" | awk '{print $1}'; }
+          SHA_ARM_MAC=$(fetch_sha aarch64-apple-darwin)
+          SHA_X86_MAC=$(fetch_sha x86_64-apple-darwin)
+          SHA_X86_LNX=$(fetch_sha x86_64-unknown-linux-gnu)
+          SHA_ARM_LNX=$(fetch_sha aarch64-unknown-linux-gnu)
+          for v in "$SHA_ARM_MAC" "$SHA_X86_MAC" "$SHA_X86_LNX" "$SHA_ARM_LNX"; do
+            [ ${#v} -eq 64 ] || { echo "bad checksum: '$v'" >&2; exit 1; }
+          done
 
           git clone "https://x-access-token:${TAP_TOKEN}@github.com/slothlabsorg/homebrew-tap.git" tap
           cd tap
