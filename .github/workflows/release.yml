@@ -74,6 +74,9 @@ jobs:
           target: ${{ matrix.target }}
           archive: runtime-orbit-$target
           checksum: sha256
+          # Required for workflow_dispatch: the action refuses to run unless the
+          # ref is a tag, and on a manual re-run github.ref is refs/heads/main.
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
   # Ship the installers as release assets too, so the website can link to a
