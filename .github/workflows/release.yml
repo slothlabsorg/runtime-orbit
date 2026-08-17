@@ -105,6 +105,29 @@ jobs:
     env:
       TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
     steps:
+      # A skipped step reads as a green job, which is how 0.2.0 shipped without
+      # a formula and nobody noticed. Say it out loud in the summary instead.
+      - name: Warn when the tap token is missing
+        if: ${{ env.TAP_TOKEN == '' }}
+        run: |
+          {
+            echo "### Homebrew formula NOT updated"
+            echo
+            echo 'The `HOMEBREW_TAP_TOKEN` secret is not set on this repository, so'
+            echo '`brew install slothlabsorg/tap/runtime-orbit` will keep serving the'
+            echo 'previous version.'
+            echo
+            echo 'Fix it once, with the same classic PAT (repo scope) already used by'
+            echo 'wattsorbit / cloudorbit / dataorbit / proxyorbit / bastionorbit:'
+            echo
+            echo '```'
+            echo 'gh secret set HOMEBREW_TAP_TOKEN --repo slothlabsorg/runtime-orbit'
+            echo '```'
+            echo
+            echo 'Then re-run this workflow with the same tag.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::warning title=Homebrew formula not updated::HOMEBREW_TAP_TOKEN is not set on this repo"
+
       - name: Bump tap formula
         if: ${{ env.TAP_TOKEN != '' }}
         env:
